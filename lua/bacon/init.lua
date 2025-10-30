@@ -10,6 +10,7 @@ local ns_id = api.nvim_create_namespace("bacon")
 
 local locations
 local location_idx = 0 -- 1-indexed, 0 is "none"
+local cached_locations_file = nil -- Cache the last found .bacon-locations file path
 
 function Bacon.setup(opts)
 	config.setup(opts)
@@ -79,6 +80,73 @@ local function lines_from(file)
 		lines[#lines + 1] = line
 	end
 	return lines
+end
+
+-- Find the project root by looking for .git directory or falling back to current directory
+local function find_project_root()
+	local dir = vim.fn.getcwd()
+	-- Try to find .git directory by walking up
+	local current = dir
+	while current ~= "/" do
+		if file_exists(current .. "/.git") or file_exists(current .. "/.git/config") then
+			return current
+		end
+		current = vim.fn.fnamemodify(current, ":h")
+	end
+	-- Fall back to current working directory
+	return dir
+end
+
+-- Check if a path is ignored by git using git check-ignore
+local function is_git_ignored(path)
+	-- Always ignore .git directory itself
+	if path:match("/%.git$") or path:match("/%.git/") then
+		return true
+	end
+
+	-- Use git check-ignore to check if path is ignored
+	-- -q flag makes it quiet (no output), we only check exit code
+	-- Exit code 0 = ignored, 1 = not ignored
+	local result = vim.fn.system({'git', 'check-ignore', '-q', path})
+	return vim.v.shell_error == 0
+end
+
+-- Recursively find all instances of a file in a directory tree
+local function find_files_recursive(dir, filename)
+	local results = {}
+	local function search_dir(current_dir)
+		-- Check if the target file exists in current directory
+		local target_path = current_dir .. "/" .. filename
+		if file_exists(target_path) then
+			table.insert(results, target_path)
+		end
+
+		-- Get all entries in the directory
+		local handle = vim.uv.fs_scandir(current_dir)
+		if handle then
+			while true do
+				local name, type = vim.uv.fs_scandir_next(handle)
+				if not name then break end
+
+				-- Recursively search subdirectories, skip hidden and git-ignored directories
+				if type == "directory" and name ~= "." and name ~= ".." then
+					local subdir_path = current_dir .. "/" .. name
+					-- Skip hidden directories and git-ignored directories
+					if not name:match("^%.") and not is_git_ignored(subdir_path) then
+						search_dir(subdir_path)
+					end
+				end
+			end
+		end
+	end
+
+	search_dir(dir)
+	return results
+end
+
+-- Check if a .bacon.socket file exists in the given directory
+local function has_socket_file(dir)
+	return file_exists(dir .. "/.bacon.socket")
 end
 
 function Bacon.move_cursor()
@@ -162,78 +230,146 @@ end
 
 -- Load the locations found in the .bacon-locations file.
 -- Doesn't modify the display, only the location table.
--- We look in the current work directory and in the parent directories.
+-- We first search recursively downward from the project root, then fall back to searching upward.
 function Bacon.bacon_load()
 	local old_location = nil
 	if location_idx > 0 then
 		old_location = locations[location_idx]
 	end
 	locations = {}
-	local dir = ""
-	repeat
-		local file = dir .. ".bacon-locations"
-		if file_exists(file) then
-			local raw_lines = lines_from(file)
-			for _, raw_line in ipairs(raw_lines) do
-				-- each line is like "error lua/bacon.lua:61:15 the faucet is leaking"
-				-- print('parse raw "' .. raw_line .. '"')
-				local cat
-				local path
-				local line
-				local col
-				local text
 
-				if vim.fn.has("win32") > 0 then
-					raw_line = raw_line:gsub("\\", "/")
-					cat, path, line, col, text = string.match(raw_line, "(%S+) (%a:[^:]+):(%d+):(%d+)%s*(.*)")
+	local selected_file = nil
+	local file_dir = ""
+
+	-- Check cache first - if we have a cached file and it still exists, use it
+	if cached_locations_file and file_exists(cached_locations_file) then
+		selected_file = cached_locations_file
+		file_dir = vim.fn.fnamemodify(selected_file, ":h") .. "/"
+	end
+
+	-- Step 1: Try recursive downward search from project root (only if cache miss)
+	if not selected_file then
+		local project_root = find_project_root()
+		local found_files = find_files_recursive(project_root, ".bacon-locations")
+
+		if #found_files > 0 then
+			-- Check which files have corresponding .bacon.socket files
+			local files_with_socket = {}
+			for _, file_path in ipairs(found_files) do
+				local dir = vim.fn.fnamemodify(file_path, ":h")
+				if has_socket_file(dir) then
+					table.insert(files_with_socket, file_path)
+				end
+			end
+
+			-- Select the appropriate file based on socket presence
+			if #files_with_socket == 1 then
+				-- Exactly one file has a socket, use it
+				selected_file = files_with_socket[1]
+			elseif #files_with_socket > 1 then
+				-- Multiple files have sockets, warn and use first one
+				print("Warning: Multiple .bacon-locations files with .bacon.socket found. Using the first one. Found:")
+				for _, file_path in ipairs(files_with_socket) do
+					print("  - " .. file_path)
+				end
+				selected_file = files_with_socket[1]
+			elseif #found_files == 1 then
+				-- Exactly one file without socket
+				selected_file = found_files[1]
+			else
+				-- Multiple files without sockets, warn and use first one
+				print("Warning: Multiple .bacon-locations files found but none have a .bacon.socket. Using the first one. Found:")
+				for _, file_path in ipairs(found_files) do
+					print("  - " .. file_path)
+				end
+				selected_file = found_files[1]
+			end
+
+			-- Extract the directory from the selected file for relative path resolution
+			file_dir = vim.fn.fnamemodify(selected_file, ":h") .. "/"
+		end
+
+		-- Step 2: If no file found in downward search, fall back to upward search
+		if not selected_file then
+			local dir = ""
+			repeat
+				local file = dir .. ".bacon-locations"
+				if file_exists(file) then
+					selected_file = file
+					file_dir = dir
+					break
+				end
+
+				if vim.uv.fs_realpath(dir) == "/" then
+					break
+				end
+				dir = "../" .. dir
+			until not file_exists(dir)
+		end
+	end
+
+	-- Step 3: Parse and load the selected file
+	if selected_file then
+		local raw_lines = lines_from(selected_file)
+		for _, raw_line in ipairs(raw_lines) do
+			-- each line is like "error lua/bacon.lua:61:15 the faucet is leaking"
+			local cat
+			local path
+			local line
+			local col
+			local text
+
+			if vim.fn.has("win32") > 0 then
+				raw_line = raw_line:gsub("\\", "/")
+				cat, path, line, col, text = string.match(raw_line, "(%S+) (%a:[^:]+):(%d+):(%d+)%s*(.*)")
+			else
+				cat, path, line, col, text = string.match(raw_line, "(%S+) ([^:]+):(%d+):(%d+)%s*(.*)")
+			end
+
+			if cat ~= nil and #cat > 0 then
+				local loc_path = path
+				if string.sub(loc_path, 1, 1) ~= "/" then
+					loc_path = file_dir .. loc_path
+				end
+				local location = {
+					cat = cat,
+					filename = loc_path,
+					lnum = tonumber(line),
+					col = tonumber(col),
+				}
+				if text ~= "" then
+					location.text = text
 				else
-					cat, path, line, col, text = string.match(raw_line, "(%S+) ([^:]+):(%d+):(%d+)%s*(.*)")
+					location.text = ""
 				end
-
-				if cat ~= nil and #cat > 0 then
-					local loc_path = path
-					if string.sub(loc_path, 1, 1) ~= "/" then
-						loc_path = dir .. loc_path
-					end
-					local location = {
-						cat = cat,
-						filename = loc_path,
-						lnum = tonumber(line),
-						col = tonumber(col),
-					}
-					if text ~= "" then
-						location.text = text
-					else
-						location.text = ""
-					end
-					table.insert(locations, location)
-				end
+				table.insert(locations, location)
 			end
-			if config.options.quickfix.enabled then
-				vim.fn.setqflist(locations, " ")
-				vim.fn.setqflist({}, "a", { title = "Bacon" })
-				if config.options.quickfix.event_trigger then
-					-- triggers the Neovim event for populating the quickfix list
-					vim.cmd("doautocmd QuickFixCmdPost")
-				end
-			end
-			location_idx = 0
-			if old_location then
-				for idx, location in ipairs(locations) do
-					if same_location(location, old_location) then
-						location_idx = idx
-						break
-					end
-				end
-			end
-			break
 		end
 
-		if vim.uv.fs_realpath(dir) == "/" then
-			break
+		-- Update quickfix list if enabled
+		if config.options.quickfix.enabled then
+			vim.fn.setqflist(locations, " ")
+			vim.fn.setqflist({}, "a", { title = "Bacon" })
+			if config.options.quickfix.event_trigger then
+				-- triggers the Neovim event for populating the quickfix list
+				vim.cmd("doautocmd QuickFixCmdPost")
+			end
 		end
-		dir = "../" .. dir
-	until not file_exists(dir)
+
+		-- Restore previously selected location if it still exists
+		location_idx = 0
+		if old_location then
+			for idx, location in ipairs(locations) do
+				if same_location(location, old_location) then
+					location_idx = idx
+					break
+				end
+			end
+		end
+
+		-- Cache the selected file for future loads
+		cached_locations_file = selected_file
+	end
 end
 
 -- Fill our buf with the locations, one per line
