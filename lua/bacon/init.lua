@@ -106,14 +106,26 @@ local function is_git_ignored(path)
 
 	-- Use git check-ignore to check if path is ignored
 	-- -q flag makes it quiet (no output), we only check exit code
-	-- Exit code 0 = ignored, 1 = not ignored
+	-- Exit code 0 = ignored, 1 = not ignored, >1 = error (not in repo, git not available, etc.)
 	local result = vim.fn.system({'git', 'check-ignore', '-q', path})
-	return vim.v.shell_error == 0
+	local exit_code = vim.v.shell_error
+
+	-- If git command failed (exit code > 1), fall back to false (don't ignore)
+	-- This handles cases where we're not in a git repo or git is not available
+	if exit_code > 1 then
+		return false
+	end
+
+	return exit_code == 0
 end
 
 -- Recursively find all instances of a file in a directory tree
 local function find_files_recursive(dir, filename)
 	local results = {}
+
+	-- Check if we're in a git repository once at the start
+	local in_git_repo = vim.fn.system({'git', 'rev-parse', '--git-dir'}):match("%S+") ~= nil
+
 	local function search_dir(current_dir)
 		-- Check if the target file exists in current directory
 		local target_path = current_dir .. "/" .. filename
@@ -131,9 +143,12 @@ local function find_files_recursive(dir, filename)
 				-- Recursively search subdirectories, skip hidden and git-ignored directories
 				if type == "directory" and name ~= "." and name ~= ".." then
 					local subdir_path = current_dir .. "/" .. name
-					-- Skip hidden directories and git-ignored directories
-					if not name:match("^%.") and not is_git_ignored(subdir_path) then
-						search_dir(subdir_path)
+					-- Skip hidden directories
+					if not name:match("^%.") then
+						-- Only use git check-ignore if we're in a git repo
+						if not in_git_repo or not is_git_ignored(subdir_path) then
+							search_dir(subdir_path)
+						end
 					end
 				end
 			end
