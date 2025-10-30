@@ -130,7 +130,8 @@ local function find_files_recursive(dir, filename)
 	local function search_dir(current_dir)
 		-- Check if the target file exists in current directory
 		local target_path = current_dir .. "/" .. filename
-		if file_exists(target_path) then
+		-- Use fs_stat instead of file_exists to properly detect sockets and other special files
+		if vim.uv.fs_stat(target_path) then
 			table.insert(results, target_path)
 		end
 
@@ -161,8 +162,11 @@ local function find_files_recursive(dir, filename)
 end
 
 -- Check if a .bacon.socket file exists in the given directory
+-- Uses fs_stat instead of io.open since .bacon.socket is a Unix socket, not a regular file
 local function has_socket_file(dir)
-	return file_exists(dir .. "/.bacon.socket")
+	local socket_path = dir .. "/.bacon.socket"
+	local stat = vim.uv.fs_stat(socket_path)
+	return stat ~= nil
 end
 
 -- Find the directory containing .bacon.socket
