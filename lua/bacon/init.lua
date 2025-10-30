@@ -6,6 +6,7 @@ local Bacon = {}
 
 local api = vim.api
 local buf, win
+local ns_id = api.nvim_create_namespace("bacon")
 
 local locations
 local location_idx = 0 -- 1-indexed, 0 is "none"
@@ -24,11 +25,11 @@ local function open_window()
 	Bacon.close_window() -- close the window if it's already open
 
 	buf = vim.api.nvim_create_buf(false, true)
-	vim.api.nvim_buf_set_option(buf, "bufhidden", "wipe")
-	vim.api.nvim_buf_set_option(buf, "filetype", "bacon")
+	vim.bo[buf].bufhidden = "wipe"
+	vim.bo[buf].filetype = "bacon"
 
-	local width = vim.api.nvim_get_option("columns")
-	local height = vim.api.nvim_get_option("lines")
+	local width = vim.o.columns
+	local height = vim.o.lines
 
 	local win_height = math.ceil(height * 0.8 - 4)
 	local win_width = math.ceil(width * 0.8)
@@ -45,10 +46,10 @@ local function open_window()
 	}
 
 	win = api.nvim_open_win(buf, true, opts)
-	vim.api.nvim_win_set_option(win, "cursorline", true)
-	local width = api.nvim_win_get_width(0)
-	api.nvim_buf_set_lines(buf, 0, -1, false, { center("Bacon Locations (hit q to close)", width), "", "" })
-	api.nvim_buf_add_highlight(buf, -1, "BaconHeader", 0, 0, -1)
+	vim.wo[win].cursorline = true
+	local win_width_actual = api.nvim_win_get_width(0)
+	api.nvim_buf_set_lines(buf, 0, -1, false, { center("Bacon Locations (hit q to close)", win_width_actual), "", "" })
+	api.nvim_buf_set_extmark(buf, ns_id, 0, 0, { end_col = -1, hl_group = "BaconHeader" })
 end
 
 -- Close the bacon list. Do nothing if it's not open
@@ -123,7 +124,7 @@ local function set_mappings()
 		"y",
 		"z",
 	}
-	for k, v in ipairs(other_chars) do
+	for _, v in ipairs(other_chars) do
 		api.nvim_buf_set_keymap(buf, "n", v, "", { nowait = true, noremap = true, silent = true })
 		api.nvim_buf_set_keymap(buf, "n", v:upper(), "", { nowait = true, noremap = true, silent = true })
 		api.nvim_buf_set_keymap(buf, "n", "<c-" .. v .. ">", "", { nowait = true, noremap = true, silent = true })
@@ -165,7 +166,7 @@ function Bacon.bacon_load()
 		local file = dir .. ".bacon-locations"
 		if file_exists(file) then
 			local raw_lines = lines_from(file)
-			for i, raw_line in ipairs(raw_lines) do
+			for _, raw_line in ipairs(raw_lines) do
 				-- each line is like "error lua/bacon.lua:61:15 the faucet is leaking"
 				-- print('parse raw "' .. raw_line .. '"')
 				local cat
@@ -220,7 +221,7 @@ function Bacon.bacon_load()
 			break
 		end
 
-		if vim.loop.fs_realpath(dir) == "/" then
+		if vim.uv.fs_realpath(dir) == "/" then
 			break
 		end
 		dir = "../" .. dir
@@ -229,7 +230,7 @@ end
 
 -- Fill our buf with the locations, one per line
 local function update_view()
-	vim.api.nvim_buf_set_option(buf, "modifiable", true)
+	vim.bo[buf].modifiable = true
 	local cwd = vim.fn.getcwd() .. "/"
 	local lines = {}
 	for i, location in ipairs(locations) do
@@ -245,7 +246,7 @@ local function update_view()
 		)
 	end
 	api.nvim_buf_set_lines(buf, 2, -1, false, lines)
-	api.nvim_buf_set_option(buf, "modifiable", false)
+	vim.bo[buf].modifiable = false
 end
 
 -- Show the window with the locations, assuming they have been previously loaded
@@ -255,7 +256,7 @@ function Bacon.bacon_show()
 		open_window()
 		update_view()
 		set_mappings()
-		api.nvim_win_set_option(win, "wrap", false)
+		vim.wo[win].wrap = false
 		api.nvim_win_set_cursor(win, { 3, 1 })
 	else
 		print("Error: no bacon locations loaded")
