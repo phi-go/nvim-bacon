@@ -136,7 +136,14 @@ end
 function Bacon.open_location(idx)
 	local location = locations[idx]
 	api.nvim_command("edit " .. location.filename)
-	api.nvim_win_set_cursor(0, { location.lnum, location.col - 1 })
+
+	-- Validate cursor position to avoid out-of-range errors
+	local buf_line_count = api.nvim_buf_line_count(0)
+	local target_line = math.min(location.lnum, buf_line_count)
+	local line_content = api.nvim_buf_get_lines(0, target_line - 1, target_line, false)[1] or ""
+	local target_col = math.min(location.col - 1, #line_content)
+
+	api.nvim_win_set_cursor(0, { target_line, target_col })
 	location_idx = idx
 end
 
