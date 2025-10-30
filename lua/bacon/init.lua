@@ -48,8 +48,9 @@ local function open_window()
 	win = api.nvim_open_win(buf, true, opts)
 	vim.wo[win].cursorline = true
 	local win_width_actual = api.nvim_win_get_width(0)
-	api.nvim_buf_set_lines(buf, 0, -1, false, { center("Bacon Locations (hit q to close)", win_width_actual), "", "" })
-	api.nvim_buf_set_extmark(buf, ns_id, 0, 0, { end_col = -1, hl_group = "BaconHeader" })
+	local header_text = center("Bacon Locations (hit q to close)", win_width_actual)
+	api.nvim_buf_set_lines(buf, 0, -1, false, { header_text, "", "" })
+	api.nvim_buf_set_extmark(buf, ns_id, 0, 0, { end_col = #header_text, hl_group = "BaconHeader" })
 end
 
 -- Close the bacon list. Do nothing if it's not open
