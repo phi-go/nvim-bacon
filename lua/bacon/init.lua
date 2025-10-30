@@ -11,6 +11,7 @@ local ns_id = api.nvim_create_namespace("bacon")
 local locations
 local location_idx = 0 -- 1-indexed, 0 is "none"
 local cached_locations_file = nil -- Cache the last found .bacon-locations file path
+local cached_socket_dir = nil -- Cache the last found .bacon.socket directory
 
 function Bacon.setup(opts)
 	config.setup(opts)
@@ -162,6 +163,36 @@ end
 -- Check if a .bacon.socket file exists in the given directory
 local function has_socket_file(dir)
 	return file_exists(dir .. "/.bacon.socket")
+end
+
+-- Find the directory containing .bacon.socket
+-- Returns: directory path if exactly one socket found, nil + error message otherwise
+local function find_socket_directory()
+	-- Check cache first - if we have a cached directory and the socket still exists, use it
+	if cached_socket_dir and has_socket_file(cached_socket_dir) then
+		return cached_socket_dir, nil
+	end
+
+	-- Cache miss or stale cache - search for socket
+	local project_root = find_project_root()
+	local found_files = find_files_recursive(project_root, ".bacon.socket")
+
+	if #found_files == 0 then
+		cached_socket_dir = nil
+		return nil, "No .bacon.socket file found in project"
+	elseif #found_files == 1 then
+		local dir = vim.fn.fnamemodify(found_files[1], ":h")
+		cached_socket_dir = dir
+		return dir, nil
+	else
+		cached_socket_dir = nil
+		local error_msg = "Multiple .bacon.socket files found:\n"
+		for _, file_path in ipairs(found_files) do
+			local dir = vim.fn.fnamemodify(file_path, ":h")
+			error_msg = error_msg .. "  - " .. dir .. "\n"
+		end
+		return nil, error_msg
+	end
 end
 
 function Bacon.move_cursor()
@@ -449,6 +480,38 @@ function Bacon.bacon_next()
 		Bacon.open_location(location_idx)
 	else
 		print("Error: no bacon locations loaded")
+	end
+end
+
+-- Send a command to bacon via its socket
+-- action: the bacon action to send (e.g., "job:test", "job:clippy", "scroll-lines(-2)")
+function Bacon.bacon_send(action)
+	if not action or action == "" then
+		print("Error: No action specified for BaconSend")
+		return
+	end
+
+	-- Find the directory containing .bacon.socket
+	local socket_dir, error_msg = find_socket_directory()
+	if not socket_dir then
+		print("Error: " .. error_msg)
+		return
+	end
+
+	-- Execute bacon --send command with the socket directory as cwd
+	local cmd = string.format("cd '%s' && bacon --send '%s'", socket_dir, action:gsub("'", "'\\''"))
+	local result = vim.fn.system(cmd)
+	local exit_code = vim.v.shell_error
+
+	if exit_code == 0 then
+		print("Bacon: Sent '" .. action .. "' to " .. socket_dir)
+	else
+		-- Display error message
+		local error_output = result:gsub("^%s*(.-)%s*$", "%1") -- trim whitespace
+		if error_output == "" then
+			error_output = "Command failed with exit code " .. exit_code
+		end
+		print("Error sending to bacon: " .. error_output)
 	end
 end
 

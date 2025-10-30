@@ -63,6 +63,7 @@ The following functions are exposed by the plugin:
 | `:BaconList`     | Does `:BaconLoad` then `:BaconShow`                        |
 | `:BaconPrevious` | Jump to the previous location in the current list          |
 | `:BaconNext`     | Jump to the next location in the current list              |
+| `:BaconSend`     | Send a command to bacon via its socket (requires `listen = true` in bacon config) |
 
 You should define at least two shortcuts, for example like this:
 
@@ -106,3 +107,40 @@ require("bacon").setup({
     }
 )}
 ```
+
+### Sending Commands to Bacon
+
+If you enable socket listening in your bacon configuration (by setting `listen = true` in your prefs.toml), you can send commands to bacon from nvim using `:BaconSend`.
+
+First, configure bacon to listen on a socket by adding this to your `prefs.toml`:
+
+```toml
+listen = true
+```
+
+Then you can send any bacon action to the running instance:
+
+```vim
+:BaconSend job:test        " Switch to the 'test' job
+:BaconSend job:clippy      " Switch to the 'clippy' job
+:BaconSend scroll-lines(-2) " Scroll bacon display up by 2 lines
+```
+
+This is particularly useful for creating keybindings to trigger different bacon jobs:
+
+```vimscript
+nnoremap <leader>bt :BaconSend job:test<CR>
+nnoremap <leader>bc :BaconSend job:clippy<CR>
+nnoremap <leader>br :BaconSend job:run<CR>
+```
+
+Or in LazyVim's `lua/config/keymaps.lua`:
+
+```lua
+local map = LazyVim.safe_keymap_set
+map("n", "<leader>bt", ":BaconSend job:test<CR>", { desc = "Bacon: run tests" })
+map("n", "<leader>bc", ":BaconSend job:clippy<CR>", { desc = "Bacon: run clippy" })
+map("n", "<leader>br", ":BaconSend job:run<CR>", { desc = "Bacon: run" })
+```
+
+See the [bacon documentation](https://dystroy.org/bacon/config/#listen) for more information about available actions.
