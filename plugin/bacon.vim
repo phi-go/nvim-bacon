@@ -16,6 +16,7 @@ command! BaconShow lua require'bacon'.bacon_show()
 command! BaconNext lua require'bacon'.bacon_next()
 command! BaconPrevious lua require'bacon'.bacon_previous()
 command! -nargs=1 BaconSend lua require'bacon'.bacon_send(<f-args>)
+command! BaconJobs lua require'bacon'.bacon_jobs()
 
 let &cpo = s:save_cpo
 unlet s:save_cpo
