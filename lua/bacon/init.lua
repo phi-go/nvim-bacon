@@ -519,11 +519,20 @@ function Bacon.bacon_send(action)
 	end
 end
 
+-- Strip ANSI color codes from a string
+local function strip_ansi_codes(str)
+	-- Pattern matches ANSI escape sequences
+	return str:gsub("\27%[[%d;]*m", "")
+end
+
 -- Parse the output of bacon --list-jobs
 -- Returns: table of job names, default job name (or nil)
 local function parse_job_list(output)
 	local jobs = {}
 	local default_job = nil
+
+	-- Strip ANSI codes from the entire output first
+	output = strip_ansi_codes(output)
 
 	for line in output:gmatch("[^\r\n]+") do
 		-- Skip border lines (┌, ├, └)
