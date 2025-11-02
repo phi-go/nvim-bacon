@@ -108,7 +108,7 @@ local function is_git_ignored(path)
 	-- Use git check-ignore to check if path is ignored
 	-- -q flag makes it quiet (no output), we only check exit code
 	-- Exit code 0 = ignored, 1 = not ignored, >1 = error (not in repo, git not available, etc.)
-	local result = vim.fn.system({'git', 'check-ignore', '-q', path})
+	local result = vim.fn.system({ "git", "check-ignore", "-q", path })
 	local exit_code = vim.v.shell_error
 
 	-- If git command failed (exit code > 1), fall back to false (don't ignore)
@@ -125,7 +125,7 @@ local function find_files_recursive(dir, filename)
 	local results = {}
 
 	-- Check if we're in a git repository once at the start
-	local in_git_repo = vim.fn.system({'git', 'rev-parse', '--git-dir'}):match("%S+") ~= nil
+	local in_git_repo = vim.fn.system({ "git", "rev-parse", "--git-dir" }):match("%S+") ~= nil
 
 	local function search_dir(current_dir)
 		-- Check if the target file exists in current directory
@@ -140,7 +140,9 @@ local function find_files_recursive(dir, filename)
 		if handle then
 			while true do
 				local name, type = vim.uv.fs_scandir_next(handle)
-				if not name then break end
+				if not name then
+					break
+				end
 
 				-- Recursively search subdirectories, skip hidden and git-ignored directories
 				if type == "directory" and name ~= "." and name ~= ".." then
@@ -328,7 +330,9 @@ function Bacon.bacon_load()
 				selected_file = found_files[1]
 			else
 				-- Multiple files without sockets, warn and use first one
-				print("Warning: Multiple .bacon-locations files found but none have a .bacon.socket. Using the first one. Found:")
+				print(
+					"Warning: Multiple .bacon-locations files found but none have a .bacon.socket. Using the first one. Found:"
+				)
 				for _, file_path in ipairs(found_files) do
 					print("  - " .. file_path)
 				end
@@ -535,25 +539,22 @@ local function parse_job_list(output)
 	output = strip_ansi_codes(output)
 
 	for line in output:gmatch("[^\r\n]+") do
-		-- Skip border lines (┌, ├, └)
-		if line:match("^[┌├└]") then
-			goto continue
-		end
+		-- Trim whitespace
+		local trimmed = line:match("^%s*(.-)%s*$")
 
-		-- Parse data lines with format: │  job-name  │command...│
-		-- Extract job name from first column
-		local job_name = line:match("^│%s*([^│%s]+)%s*│")
-		if job_name and job_name ~= "job" then -- Skip header row
+		-- Match lines with pattern: │ <job-name> │ <command> │
+		-- Job names are alphanumeric with hyphens
+		local job_name = trimmed:match("^│%s*([%w%-]+)%s*│")
+
+		if job_name and job_name ~= "job" then
 			table.insert(jobs, job_name)
 		end
 
-		-- Parse default job line: "default job: check"
-		local default = line:match("^default job:%s*(.+)%s*$")
+		-- Parse default job line
+		local default = trimmed:match("default%s+job:%s*([%w%-]+)")
 		if default then
 			default_job = default
 		end
-
-		::continue::
 	end
 
 	return jobs, default_job
@@ -636,8 +637,29 @@ local function set_jobs_mappings()
 
 	-- Disable most other keys to prevent accidental edits
 	local other_chars = {
-		"a", "b", "c", "d", "e", "f", "g", "h", "i", "l", "m",
-		"n", "o", "p", "r", "s", "t", "u", "v", "w", "x", "y", "z",
+		"a",
+		"b",
+		"c",
+		"d",
+		"e",
+		"f",
+		"g",
+		"h",
+		"i",
+		"l",
+		"m",
+		"n",
+		"o",
+		"p",
+		"r",
+		"s",
+		"t",
+		"u",
+		"v",
+		"w",
+		"x",
+		"y",
+		"z",
 	}
 	for _, v in ipairs(other_chars) do
 		api.nvim_buf_set_keymap(jobs_buf, "n", v, "", { nowait = true, noremap = true, silent = true })
