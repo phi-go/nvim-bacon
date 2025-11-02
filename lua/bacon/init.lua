@@ -512,7 +512,7 @@ function Bacon.bacon_send(action)
 	local exit_code = vim.v.shell_error
 
 	if exit_code == 0 then
-		print("Bacon: Sent '" .. action .. "' to " .. socket_dir)
+		-- print("Bacon: Sent '" .. action .. "' to " .. socket_dir)
 	else
 		-- Display error message
 		local error_output = result:gsub("^%s*(.-)%s*$", "%1") -- trim whitespace
