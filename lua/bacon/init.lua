@@ -530,7 +530,7 @@ local function strip_ansi_codes(str)
 end
 
 -- Parse the output of bacon --list-jobs
--- Returns: table of job names, default job name (or nil)
+-- Returns: table of job objects {name, command}, default job name (or nil)
 local function parse_job_list(output)
 	local jobs = {}
 	local default_job = nil
@@ -544,10 +544,12 @@ local function parse_job_list(output)
 
 		-- Match lines with pattern: │ <job-name> │ <command> │
 		-- Job names are alphanumeric with hyphens
-		local job_name = trimmed:match("^│%s*([%w%-]+)%s*│")
+		local job_name, command = trimmed:match("^│%s*([%w%-]+)%s*│(.-)│")
 
 		if job_name and job_name ~= "job" then
-			table.insert(jobs, job_name)
+			-- Trim whitespace from command
+			local trimmed_command = command:match("^%s*(.-)%s*$")
+			table.insert(jobs, { name = job_name, command = trimmed_command })
 		end
 
 		-- Parse default job line
@@ -560,113 +562,6 @@ local function parse_job_list(output)
 	return jobs, default_job
 end
 
--- Open a floating window to display bacon jobs
-local jobs_buf, jobs_win
-local jobs_list = {}
-
-local function open_jobs_window()
-	if jobs_win and api.nvim_win_is_valid(jobs_win) then
-		api.nvim_win_close(jobs_win, true)
-	end
-
-	jobs_buf = api.nvim_create_buf(false, true)
-	vim.bo[jobs_buf].bufhidden = "wipe"
-	vim.bo[jobs_buf].filetype = "bacon"
-
-	local width = vim.o.columns
-	local height = vim.o.lines
-
-	local win_height = math.min(math.ceil(height * 0.5), #jobs_list + 4)
-	local win_width = math.ceil(width * 0.6)
-	local row = math.ceil((height - win_height) / 2 - 1)
-	local col = math.ceil((width - win_width) / 2)
-
-	local opts = {
-		style = "minimal",
-		relative = "editor",
-		width = win_width,
-		height = win_height,
-		row = row,
-		col = col,
-		border = "rounded",
-	}
-
-	jobs_win = api.nvim_open_win(jobs_buf, true, opts)
-	vim.wo[jobs_win].cursorline = true
-
-	local win_width_actual = api.nvim_win_get_width(jobs_win)
-	local header_text = center("Bacon Jobs (hit q to close, Enter to start)", win_width_actual)
-	api.nvim_buf_set_lines(jobs_buf, 0, -1, false, { header_text, "" })
-	api.nvim_buf_set_extmark(jobs_buf, ns_id, 0, 0, { end_col = #header_text, hl_group = "BaconHeader" })
-end
-
--- Close the jobs window
-local function close_jobs_window()
-	if jobs_win and api.nvim_win_is_valid(jobs_win) then
-		api.nvim_win_close(jobs_win, true)
-		jobs_win = nil
-	end
-end
-
--- Start the selected job
-local function start_selected_job()
-	local cursor_line = api.nvim_win_get_cursor(jobs_win)[1]
-	local job_idx = cursor_line - 2 -- Account for header and blank line
-
-	if job_idx > 0 and job_idx <= #jobs_list then
-		local job_name = jobs_list[job_idx]
-		close_jobs_window()
-		Bacon.bacon_send("job:" .. job_name)
-	end
-end
-
--- Set up keybindings for jobs window
-local function set_jobs_mappings()
-	local mappings = {
-		["<cr>"] = "start_selected_job()",
-		q = "close_jobs_window()",
-	}
-
-	for k, v in pairs(mappings) do
-		api.nvim_buf_set_keymap(jobs_buf, "n", k, ':lua require"bacon"._' .. v .. "<cr>", {
-			nowait = true,
-			noremap = true,
-			silent = true,
-		})
-	end
-
-	-- Disable most other keys to prevent accidental edits
-	local other_chars = {
-		"a",
-		"b",
-		"c",
-		"d",
-		"e",
-		"f",
-		"g",
-		"h",
-		"i",
-		"l",
-		"m",
-		"n",
-		"o",
-		"p",
-		"r",
-		"s",
-		"t",
-		"u",
-		"v",
-		"w",
-		"x",
-		"y",
-		"z",
-	}
-	for _, v in ipairs(other_chars) do
-		api.nvim_buf_set_keymap(jobs_buf, "n", v, "", { nowait = true, noremap = true, silent = true })
-		api.nvim_buf_set_keymap(jobs_buf, "n", v:upper(), "", { nowait = true, noremap = true, silent = true })
-		api.nvim_buf_set_keymap(jobs_buf, "n", "<c-" .. v .. ">", "", { nowait = true, noremap = true, silent = true })
-	end
-end
 
 -- Display available bacon jobs and allow selection to start one
 function Bacon.bacon_jobs()
@@ -699,35 +594,25 @@ function Bacon.bacon_jobs()
 		return
 	end
 
-	-- Store jobs for later access
-	jobs_list = jobs
-
-	-- Open window and display jobs
-	open_jobs_window()
-
-	-- Populate job list
-	vim.bo[jobs_buf].modifiable = true
-	local lines = {}
-	for i, job_name in ipairs(jobs) do
-		local line = "  " .. job_name
-		if default_job and job_name == default_job then
-			line = line .. " (default)"
+	-- Use vim.ui.select for job selection
+	vim.ui.select(jobs, {
+		prompt = "Select bacon job:",
+		format_item = function(job)
+			local display = job.name .. ": " .. job.command
+			if default_job and job.name == default_job then
+				display = display .. " (default)"
+			end
+			return display
+		end,
+	}, function(choice, idx)
+		-- This callback is called when user selects or cancels
+		if choice then
+			-- User selected a job - send the job name
+			Bacon.bacon_send("job:" .. choice.name)
 		end
-		table.insert(lines, line)
-	end
-	api.nvim_buf_set_lines(jobs_buf, 2, -1, false, lines)
-	vim.bo[jobs_buf].modifiable = false
-
-	-- Set up keybindings
-	set_jobs_mappings()
-
-	-- Position cursor on first job
-	api.nvim_win_set_cursor(jobs_win, { 3, 0 })
+		-- If choice is nil, user cancelled (pressed Esc/q) - do nothing
+	end)
 end
-
--- Internal functions exposed for keymappings
-Bacon._close_jobs_window = close_jobs_window
-Bacon._start_selected_job = start_selected_job
 
 -- Return the public API
 return Bacon
